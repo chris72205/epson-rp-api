@@ -129,9 +129,8 @@ curl -X POST http://pi:8080/print/text -H 'Content-Type: application/json' \
 
 ## RabbitMQ (optional)
 
-Set `RABBITMQ_URL` to also consume print jobs from RabbitMQ and publish status events
-(design notes in `docs/rabbitmq.md`). When unset, the service is HTTP-only and pika is
-never imported. Include a heartbeat in the URL, e.g.
+Set `RABBITMQ_URL` to also consume print jobs from RabbitMQ and publish status events. When unset,
+the service is HTTP-only and pika is never imported. Include a heartbeat in the URL, e.g.
 `amqp://user:pass@host:5672/%2f?heartbeat=30`.
 
 ### Job intake — `print-jobs` (direct exchange)
