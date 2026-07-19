@@ -24,7 +24,7 @@ def new_job_id():
 class Job:
     id: str
     blocks: list
-    source: str  # "print" | "text" | "test"
+    source: str  # HTTP: "print" | "text" | "test"; RabbitMQ: client-supplied
     status: str = QUEUED
     error: str = None
     created_at: str = field(default_factory=_now)

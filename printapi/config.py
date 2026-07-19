@@ -21,6 +21,10 @@ class Config:
     history_max: int = 100
     log_level: str = "INFO"
     fake: bool = False
+    rabbitmq_url: str = ""  # empty = RabbitMQ disabled
+    rabbitmq_job_queue: str = "print-jobs"
+    rabbitmq_poll_interval: float = 30.0
+    printer_name: str = "receipt"
 
     @classmethod
     def from_env(cls, env=None):
@@ -37,4 +41,8 @@ class Config:
             history_max=int(env.get("HISTORY_MAX", "100")),
             log_level=env.get("LOG_LEVEL", "INFO").upper(),
             fake=_truthy(env.get("PRINTER_FAKE", "")),
+            rabbitmq_url=env.get("RABBITMQ_URL", ""),
+            rabbitmq_job_queue=env.get("RABBITMQ_JOB_QUEUE", "print-jobs"),
+            rabbitmq_poll_interval=float(env.get("RABBITMQ_POLL_INTERVAL", "30")),
+            printer_name=env.get("PRINTER_NAME", "receipt"),
         )
