@@ -1,8 +1,9 @@
 # epson-rp-api
 
 HTTP JSON API for printing to a USB-connected **Epson TM-T88VI** receipt printer from a
-**Raspberry Pi Zero W**. Print jobs are queued in memory and printed sequentially by a
-background worker. No authentication — intended for a private LAN only.
+**Raspberry Pi Zero W**, with an optional RabbitMQ intake + status event stream. Print jobs
+are queued in memory and printed sequentially by a background worker. No authentication —
+intended for a private LAN only.
 
 ## Install (on the Pi)
 
@@ -126,6 +127,51 @@ curl -X POST http://pi:8080/print/text -H 'Content-Type: application/json' \
 ```
 `paper`: `ok` / `near_end` / `out` · `busy: true` means a job is mid-print (state query skipped).
 
+## RabbitMQ (optional)
+
+Set `RABBITMQ_URL` to also consume print jobs from RabbitMQ and publish status events
+(design notes in `docs/rabbitmq.md`). When unset, the service is HTTP-only and pika is
+never imported. Include a heartbeat in the URL, e.g.
+`amqp://user:pass@host:5672/%2f?heartbeat=30`.
+
+### Job intake — `print-jobs` (direct exchange)
+
+The service declares a durable direct exchange `print-jobs` and a durable queue
+(`RABBITMQ_JOB_QUEUE`) bound with routing key `print`. Publish jobs as JSON:
+
+```json
+{"version": 1, "source": "pos", "job_id": "order-1234", "blocks": [{"type": "text", "content": "hi"}, {"type": "cut"}]}
+```
+
+- `version` — required, must be `1`.
+- `source` — required, must match `^[a-z0-9][a-z0-9_-]{0,31}$`; identifies the publishing
+  system and appears in status routing keys.
+- `job_id` — optional correlation id (`[A-Za-z0-9_-]{1,64}`), generated when omitted.
+  Publishing has no response, so supply one if you want to match status events to jobs.
+  A `job_id` the service already knows is treated as a duplicate delivery and dropped.
+- `blocks` — same format and validation as `POST /print`.
+
+Messages are acked once validated and enqueued — the AMQP equivalent of the HTTP 202, so
+a service restart can drop an acked-but-unprinted job (same retryable contract as the
+HTTP API). Malformed messages are rejected without requeue. When the local queue is full,
+the message is returned to RabbitMQ for redelivery.
+
+### Status events — `print-status` (topic exchange)
+
+Every job (HTTP or RabbitMQ) emits lifecycle events; printer state transitions are
+detected by a check after each job plus a periodic poll (`RABBITMQ_POLL_INTERVAL`).
+Messages are JSON with `version`, `event`, `ts`, and ids.
+
+| Routing key | When |
+|---|---|
+| `job.<source>.success` / `job.<source>.failed` | job reached a terminal state (`job_id`, `error` in payload) |
+| `printer.<name>.online` / `printer.<name>.offline` | availability changed (`<name>` = `PRINTER_NAME`) |
+| `printer.<name>.paper_ok` / `.paper_low` / `.out_of_paper` | paper state changed |
+
+Example bindings: a POS listens on `job.pos.*`; a dashboard takes `job.*.failed` plus
+`printer.#`. The current state is published once at startup as a baseline. After a
+connection drop an event can occasionally be delivered twice — treat events idempotently.
+
 ## Configuration
 
 Environment variables (for the service, set them in `/etc/default/epson-rp-api`):
@@ -140,6 +186,10 @@ Environment variables (for the service, set them in `/etc/default/epson-rp-api`)
 | `QUEUE_MAX` / `HISTORY_MAX` | `50` / `100` | |
 | `LOG_LEVEL` | `INFO` | |
 | `PRINTER_FAKE` | unset | `1` = no USB; jobs go to an in-memory dummy (for development) |
+| `RABBITMQ_URL` | unset | AMQP URL; unset disables RabbitMQ entirely |
+| `RABBITMQ_JOB_QUEUE` | `print-jobs` | Durable queue consumed for print jobs |
+| `RABBITMQ_POLL_INTERVAL` | `30` | Printer state poll interval (seconds) |
+| `PRINTER_NAME` | `receipt` | `<name>` segment of `printer.<name>.*` routing keys |
 
 ## Development
 
@@ -161,6 +211,9 @@ treat a lost job as retryable.
 4. Unplug and replug the printer, then print again — the per-job USB connection recovers
    without a service restart.
 5. Fire several jobs quickly and watch `GET /jobs` progress through the statuses.
+6. With RabbitMQ configured: publish a job message to the `print-jobs` exchange and watch
+   it print; bind a test queue to `print-status` with `job.#` and `printer.#` and check
+   that job events arrive, then open the cover / pull paper and watch the printer events.
 
 ## Troubleshooting
 
